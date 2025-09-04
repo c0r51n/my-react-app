@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 
 const clientId = "41d43e5b9f6041beba88ec9cd021c3cd"; // von Spotify Dashboard
-const redirectUri = "https://w86js7.csb.app/"; // oder Codesandbox-URL
+const redirectUri = "https://my-react-app-67rd.vercel.app/"; // oder Codesandbox-URL
 const scopes = [
   "user-read-playback-state",
   "user-modify-playback-state",
