@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { FaPlay, FaPause, FaForward, FaBackward, FaSearch, FaPlus } from "react-icons/fa";
 
 const clientId = "41d43e5b9f6041beba88ec9cd021c3cd";
-const redirectUri = "https://my-react-app-67rd.vercel.app/";
+const redirectUri = "https://corxify.vercel.app/";
 const scopes = [
   "user-read-playback-state",
   "user-modify-playback-state",
