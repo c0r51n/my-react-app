@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { FaPlay, FaPause, FaForward, FaBackward, FaSearch, FaPlus } from "react-icons/fa";
 
-const clientId = "41d43e5b9f6041beba88ec9cd021c3cd";
-const redirectUri = "https://corxify.vercel.app/";
+const clientId = "41d43e5b9f6041beba88ec9cd021c3cd"; 
+const redirectUri = "https://my-react-app-67rd.vercel.app/"; 
 const scopes = [
   "user-read-playback-state",
   "user-modify-playback-state",
@@ -10,6 +9,11 @@ const scopes = [
   "playlist-read-private",
   "playlist-modify-public",
   "playlist-modify-private",
+  "playlist-read-collaborative",
+  "user-library-modify",
+  "user-library-read",
+  "user-read-email",
+  "user-read-private",
 ];
 
 function App() {
@@ -21,48 +25,192 @@ function App() {
   const [searchResults, setSearchResults] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // ---------- PKCE & Login ----------
-  function generateCodeVerifier(length) { /* ... wie vorher ... */ }
-  async function generateCodeChallenge(codeVerifier) { /* ... wie vorher ... */ }
+  // ---------- PKCE Helper ----------
+  function generateCodeVerifier(length) {
+    let text = "";
+    const possible =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    for (let i = 0; i < length; i++) {
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+  }
 
+  async function generateCodeChallenge(codeVerifier) {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(codeVerifier)
+    );
+    return btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  // ---------- Login ----------
   async function login() {
     const codeVerifier = generateCodeVerifier(128);
     const codeChallenge = await generateCodeChallenge(codeVerifier);
     localStorage.setItem("code_verifier", codeVerifier);
 
+    const state = "spotify_auth_state";
+    const scope = scopes.join(" ");
+
     const args = new URLSearchParams({
       response_type: "code",
       client_id: clientId,
-      scope: scopes.join(" "),
+      scope: scope,
       redirect_uri: redirectUri,
+      state: state,
       code_challenge_method: "S256",
       code_challenge: codeChallenge,
     });
+
     window.location = "https://accounts.spotify.com/authorize?" + args;
   }
 
-  async function getToken(code) { /* ... wie vorher ... */ }
-  async function getProfile() { /* ... wie vorher ... */ }
-  async function getCurrentTrack() { /* ... wie vorher ... */ }
+  // ---------- Get Token ----------
+  async function getToken(code) {
+    const codeVerifier = localStorage.getItem("code_verifier");
 
-  // ---------- Playback ----------
-  async function togglePlay() { /* ... wie vorher ... */ }
-  async function next() { /* ... wie vorher ... */ }
-  async function prev() { /* ... wie vorher ... */ }
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code: code,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+      code_verifier: codeVerifier,
+    });
 
-  // ---------- Suche ----------
-  async function search() { /* ... wie vorher ... */ }
+    const response = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body,
+    });
+
+    const data = await response.json();
+    if (data.access_token) {
+      setToken(data.access_token);
+      localStorage.setItem("access_token", data.access_token);
+    }
+  }
+
+  // ---------- Fetch Profile ----------
+  async function getProfile() {
+    const response = await fetch("https://api.spotify.com/v1/me", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    const data = await response.json();
+    setProfile(data);
+  }
+
+  // ---------- Fetch Current Track ----------
+  async function getCurrentTrack() {
+    const response = await fetch(
+      "https://api.spotify.com/v1/me/player/currently-playing",
+      { headers: { Authorization: "Bearer " + token } }
+    );
+    if (response.status === 200) {
+      const data = await response.json();
+      setTrack(data.item);
+      setIsPlaying(!data.is_playing ? false : true);
+    }
+  }
+
+  // ---------- Control Playback ----------
+  async function togglePlay() {
+    if (isPlaying) {
+      await fetch("https://api.spotify.com/v1/me/player/pause", {
+        method: "PUT",
+        headers: { Authorization: "Bearer " + token },
+      });
+      setIsPlaying(false);
+    } else {
+      await fetch("https://api.spotify.com/v1/me/player/play", {
+        method: "PUT",
+        headers: { Authorization: "Bearer " + token },
+      });
+      setIsPlaying(true);
+    }
+  }
+
+  async function next() {
+    await fetch("https://api.spotify.com/v1/me/player/next", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+    });
+    getCurrentTrack();
+  }
+
+  async function prev() {
+    await fetch("https://api.spotify.com/v1/me/player/previous", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+    });
+    getCurrentTrack();
+  }
+
+  // ---------- Search ----------
+  async function search() {
+    if (!searchQuery) return;
+    const response = await fetch(
+      `https://api.spotify.com/v1/search?q=${encodeURIComponent(
+        searchQuery
+      )}&type=track,artist,album&limit=5`,
+      { headers: { Authorization: "Bearer " + token } }
+    );
+    const data = await response.json();
+    setSearchResults(data.tracks ? data.tracks.items : []);
+  }
 
   // ---------- Playlists ----------
-  async function getPlaylists() { /* ... wie vorher ... */ }
-  async function createPlaylist(name) { /* ... wie vorher ... */ }
-  async function addToPlaylist(playlistId, trackUri) { /* ... wie vorher ... */ }
+  async function getPlaylists() {
+    const response = await fetch("https://api.spotify.com/v1/me/playlists", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    const data = await response.json();
+    setPlaylists(data.items);
+  }
 
+  async function createPlaylist(name) {
+    if (!profile) return;
+    const response = await fetch(
+      `https://api.spotify.com/v1/users/${profile.id}/playlists`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, public: false }),
+      }
+    );
+    const data = await response.json();
+    setPlaylists([...playlists, data]);
+  }
+
+  async function addToPlaylist(playlistId, trackUri) {
+    await fetch(
+      `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ uris: [trackUri] }),
+      }
+    );
+    alert("Track hinzugefügt!");
+  }
+
+  // ---------- Init ----------
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
-    if (!token && code) getToken(code);
-    else {
+
+    if (!token && code) {
+      getToken(code);
+    } else {
       const storedToken = localStorage.getItem("access_token");
       if (storedToken) setToken(storedToken);
     }
@@ -71,99 +219,99 @@ function App() {
   return (
     <div
       style={{
-        fontFamily: "Arial, sans-serif",
-        backgroundColor: "#191414",
+        fontFamily: "Arial",
+        background: "linear-gradient(135deg, #000000, #191414)",
+        minHeight: "100vh",
         color: "white",
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        padding: "15px",
-        overflow: "hidden", // Kein Scrollen Hauptscreen
+        padding: "20px",
       }}
     >
-      <h1 style={{ color: "#1DB954", marginBottom: "10px" }}>Spotify Clone</h1>
+      <h1 style={{ color: "#1db954" }}>🎵 Spotify Controller</h1>
 
       {!token ? (
         <button
           onClick={login}
           style={{
-            background: "#1DB954",
+            background: "#1db954",
             border: "none",
-            padding: "12px 30px",
-            borderRadius: "50px",
+            padding: "12px 20px",
+            borderRadius: "25px",
             fontSize: "16px",
-            color: "white",
             cursor: "pointer",
-            marginTop: "50%",
+            color: "white",
+            marginTop: "20px",
           }}
         >
           Login with Spotify
         </button>
       ) : (
         <>
+          {profile && (
+            <div>
+              <h2>Hallo {profile.display_name}</h2>
+              <p>{profile.email}</p>
+            </div>
+          )}
+
           {track && (
-            <div style={{ textAlign: "center", marginBottom: "15px" }}>
+            <div style={{ marginTop: "20px" }}>
+              <h3>Gerade läuft:</h3>
+              <p>
+                {track.name} – {track.artists.map((a) => a.name).join(", ")}
+              </p>
               <img
                 src={track.album.images[0].url}
                 alt="album cover"
-                style={{ width: "220px", borderRadius: "10px" }}
+                style={{ width: "200px", borderRadius: "10px" }}
               />
-              <h3 style={{ margin: "10px 0 5px" }}>{track.name}</h3>
-              <p style={{ margin: "0 0 10px" }}>
-                {track.artists.map((a) => a.name).join(", ")}
-              </p>
-
-              <div style={{ display: "flex", justifyContent: "center", gap: "25px" }}>
-                <button onClick={prev} style={btnStyle}>
-                  <FaBackward />
+              <div style={{ marginTop: "10px" }}>
+                <button onClick={prev}>⏮</button>
+                <button onClick={togglePlay}>
+                  {isPlaying ? "⏸" : "▶️"}
                 </button>
-                <button onClick={togglePlay} style={btnStyle}>
-                  {isPlaying ? <FaPause /> : <FaPlay />}
-                </button>
-                <button onClick={next} style={btnStyle}>
-                  <FaForward />
-                </button>
+                <button onClick={next}>⏭</button>
               </div>
+              <button
+                style={{
+                  background: "#1db954",
+                  marginTop: "10px",
+                  border: "none",
+                  borderRadius: "15px",
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  color: "white",
+                }}
+                onClick={() =>
+                  playlists.length > 0 &&
+                  addToPlaylist(playlists[0].id, track.uri)
+                }
+              >
+                ➕ In Playlist speichern
+              </button>
             </div>
           )}
 
           {/* Suche */}
-          <div style={{ width: "100%", marginTop: "10px" }}>
-            <div style={{ display: "flex", gap: "10px", marginBottom: "5px" }}>
-              <input
-                type="text"
-                placeholder="Songs / Künstler / Alben"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  flex: 1,
-                  padding: "10px 15px",
-                  borderRadius: "25px",
-                  border: "none",
-                  outline: "none",
-                }}
-              />
-              <button onClick={search} style={btnStyle}>
-                <FaSearch />
-              </button>
-            </div>
-            <div
+          <div style={{ marginTop: "20px" }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Song/Artist/Album suchen..."
               style={{
-                maxHeight: "150px",
-                overflowY: "auto",
-                padding: "5px",
+                padding: "10px",
+                borderRadius: "20px",
+                border: "1px solid #333",
+                width: "60%",
+                marginRight: "10px",
               }}
-            >
+            />
+            <button onClick={search} style={{ background: "#1db954" }}>
+              🔍
+            </button>
+            <div>
               {searchResults.map((s) => (
-                <div
-                  key={s.id}
-                  style={{
-                    padding: "5px 0",
-                    borderBottom: "1px solid #333",
-                  }}
-                >
+                <div key={s.id} style={{ marginTop: "10px" }}>
                   {s.name} – {s.artists.map((a) => a.name).join(", ")}
                 </div>
               ))}
@@ -171,71 +319,32 @@ function App() {
           </div>
 
           {/* Playlists */}
-          <div style={{ marginTop: "15px", width: "100%" }}>
-            <div style={{ display: "flex", gap: "10px", marginBottom: "5px" }}>
-              <button onClick={getPlaylists} style={btnStyle}>
-                📂 Playlists abrufen
-              </button>
-              <button
-                onClick={() => createPlaylist("Neue Playlist")}
-                style={btnStyle}
-              >
-                <FaPlus /> Neue Playlist
-              </button>
-            </div>
-            <div
-              style={{
-                maxHeight: "120px",
-                overflowY: "auto",
-                padding: "5px",
-                borderTop: "1px solid #333",
-              }}
+          <div style={{ marginTop: "30px" }}>
+            <button
+              onClick={getPlaylists}
+              style={{ background: "#1db954", marginRight: "10px" }}
             >
-              {playlists.map((pl) => (
-                <div
-                  key={pl.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "5px 0",
-                    borderBottom: "1px solid #333",
-                  }}
-                >
-                  {pl.name}
-                  {track && (
-                    <button
-                      style={btnStyleSmall}
-                      onClick={() => addToPlaylist(pl.id, track.uri)}
-                    >
-                      <FaPlus />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+              📂 Playlists abrufen
+            </button>
+            <button
+              onClick={() => createPlaylist("Neue Playlist")}
+              style={{ background: "#1db954" }}
+            >
+              ➕ Neue Playlist
+            </button>
+
+            {playlists.length > 0 && (
+              <ul>
+                {playlists.map((pl) => (
+                  <li key={pl.id}>{pl.name}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </>
       )}
     </div>
   );
 }
-
-// ---------------- Button Styles ----------------
-const btnStyle = {
-  background: "#1DB954",
-  border: "none",
-  borderRadius: "50px",
-  padding: "10px 15px",
-  color: "white",
-  cursor: "pointer",
-  fontSize: "18px",
-};
-
-const btnStyleSmall = {
-  ...btnStyle,
-  padding: "5px 10px",
-  fontSize: "14px",
-};
 
 export default App;
