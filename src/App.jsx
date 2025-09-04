@@ -1,17 +1,29 @@
 import React, { useState, useEffect } from "react";
 
-const clientId = "41d43e5b9f6041beba88ec9cd021c3cd"; // von Spotify Dashboard
-const redirectUri = "https://my-react-app-67rd.vercel.app/"; // oder Codesandbox-URL
+const clientId = "41d43e5b9f6041beba88ec9cd021c3cd"; 
+const redirectUri = "https://my-react-app-67rd.vercel.app/"; 
 const scopes = [
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",
+  "playlist-read-private",
+  "playlist-modify-public",
+  "playlist-modify-private",
+  "playlist-read-collaborative",
+  "user-library-modify",
+  "user-library-read",
+  "user-read-email",
+  "user-read-private",
 ];
 
 function App() {
   const [token, setToken] = useState(null);
   const [profile, setProfile] = useState(null);
   const [track, setTrack] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playlists, setPlaylists] = useState([]);
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // ---------- PKCE Helper ----------
   function generateCodeVerifier(length) {
@@ -95,29 +107,30 @@ function App() {
   async function getCurrentTrack() {
     const response = await fetch(
       "https://api.spotify.com/v1/me/player/currently-playing",
-      {
-        headers: { Authorization: "Bearer " + token },
-      }
+      { headers: { Authorization: "Bearer " + token } }
     );
     if (response.status === 200) {
       const data = await response.json();
       setTrack(data.item);
+      setIsPlaying(!data.is_playing ? false : true);
     }
   }
 
   // ---------- Control Playback ----------
-  async function play() {
-    await fetch("https://api.spotify.com/v1/me/player/play", {
-      method: "PUT",
-      headers: { Authorization: "Bearer " + token },
-    });
-  }
-
-  async function pause() {
-    await fetch("https://api.spotify.com/v1/me/player/pause", {
-      method: "PUT",
-      headers: { Authorization: "Bearer " + token },
-    });
+  async function togglePlay() {
+    if (isPlaying) {
+      await fetch("https://api.spotify.com/v1/me/player/pause", {
+        method: "PUT",
+        headers: { Authorization: "Bearer " + token },
+      });
+      setIsPlaying(false);
+    } else {
+      await fetch("https://api.spotify.com/v1/me/player/play", {
+        method: "PUT",
+        headers: { Authorization: "Bearer " + token },
+      });
+      setIsPlaying(true);
+    }
   }
 
   async function next() {
@@ -125,6 +138,7 @@ function App() {
       method: "POST",
       headers: { Authorization: "Bearer " + token },
     });
+    getCurrentTrack();
   }
 
   async function prev() {
@@ -132,6 +146,61 @@ function App() {
       method: "POST",
       headers: { Authorization: "Bearer " + token },
     });
+    getCurrentTrack();
+  }
+
+  // ---------- Search ----------
+  async function search() {
+    if (!searchQuery) return;
+    const response = await fetch(
+      `https://api.spotify.com/v1/search?q=${encodeURIComponent(
+        searchQuery
+      )}&type=track,artist,album&limit=5`,
+      { headers: { Authorization: "Bearer " + token } }
+    );
+    const data = await response.json();
+    setSearchResults(data.tracks ? data.tracks.items : []);
+  }
+
+  // ---------- Playlists ----------
+  async function getPlaylists() {
+    const response = await fetch("https://api.spotify.com/v1/me/playlists", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    const data = await response.json();
+    setPlaylists(data.items);
+  }
+
+  async function createPlaylist(name) {
+    if (!profile) return;
+    const response = await fetch(
+      `https://api.spotify.com/v1/users/${profile.id}/playlists`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, public: false }),
+      }
+    );
+    const data = await response.json();
+    setPlaylists([...playlists, data]);
+  }
+
+  async function addToPlaylist(playlistId, trackUri) {
+    await fetch(
+      `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ uris: [trackUri] }),
+      }
+    );
+    alert("Track hinzugefügt!");
   }
 
   // ---------- Init ----------
@@ -151,13 +220,13 @@ function App() {
     <div
       style={{
         fontFamily: "Arial",
-        background: "linear-gradient(135deg, #1db954, #191414)",
+        background: "linear-gradient(135deg, #000000, #191414)",
         minHeight: "100vh",
         color: "white",
         padding: "20px",
       }}
     >
-      <h1>🎵 Spotify Controller</h1>
+      <h1 style={{ color: "#1db954" }}>🎵 Spotify Controller</h1>
 
       {!token ? (
         <button
@@ -170,25 +239,17 @@ function App() {
             fontSize: "16px",
             cursor: "pointer",
             color: "white",
+            marginTop: "20px",
           }}
         >
           Login with Spotify
         </button>
       ) : (
         <>
-          <button onClick={getProfile}>Get Profile</button>
-          <button onClick={getCurrentTrack}>Get Current Track</button>
-          <div style={{ marginTop: "20px" }}>
-            <button onClick={play}>▶️ Play</button>
-            <button onClick={pause}>⏸ Pause</button>
-            <button onClick={prev}>⏮ Previous</button>
-            <button onClick={next}>⏭ Next</button>
-          </div>
-
           {profile && (
-            <div style={{ marginTop: "20px" }}>
+            <div>
               <h2>Hallo {profile.display_name}</h2>
-              <p>Email: {profile.email}</p>
+              <p>{profile.email}</p>
             </div>
           )}
 
@@ -203,8 +264,83 @@ function App() {
                 alt="album cover"
                 style={{ width: "200px", borderRadius: "10px" }}
               />
+              <div style={{ marginTop: "10px" }}>
+                <button onClick={prev}>⏮</button>
+                <button onClick={togglePlay}>
+                  {isPlaying ? "⏸" : "▶️"}
+                </button>
+                <button onClick={next}>⏭</button>
+              </div>
+              <button
+                style={{
+                  background: "#1db954",
+                  marginTop: "10px",
+                  border: "none",
+                  borderRadius: "15px",
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  color: "white",
+                }}
+                onClick={() =>
+                  playlists.length > 0 &&
+                  addToPlaylist(playlists[0].id, track.uri)
+                }
+              >
+                ➕ In Playlist speichern
+              </button>
             </div>
           )}
+
+          {/* Suche */}
+          <div style={{ marginTop: "20px" }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Song/Artist/Album suchen..."
+              style={{
+                padding: "10px",
+                borderRadius: "20px",
+                border: "1px solid #333",
+                width: "60%",
+                marginRight: "10px",
+              }}
+            />
+            <button onClick={search} style={{ background: "#1db954" }}>
+              🔍
+            </button>
+            <div>
+              {searchResults.map((s) => (
+                <div key={s.id} style={{ marginTop: "10px" }}>
+                  {s.name} – {s.artists.map((a) => a.name).join(", ")}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Playlists */}
+          <div style={{ marginTop: "30px" }}>
+            <button
+              onClick={getPlaylists}
+              style={{ background: "#1db954", marginRight: "10px" }}
+            >
+              📂 Playlists abrufen
+            </button>
+            <button
+              onClick={() => createPlaylist("Neue Playlist")}
+              style={{ background: "#1db954" }}
+            >
+              ➕ Neue Playlist
+            </button>
+
+            {playlists.length > 0 && (
+              <ul>
+                {playlists.map((pl) => (
+                  <li key={pl.id}>{pl.name}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         </>
       )}
     </div>
